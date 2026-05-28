@@ -7,12 +7,15 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 import os
 import logging
 
-# Must be set before crewai is imported — disables its OpenTelemetry tracer
+# Must be set before crewai/litellm are imported
 os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
 os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["LITELLM_DISABLE_PROMPT_CACHING"] = "true"
+os.environ["GROQ_DISABLE_CACHING"] = "true"
 
 from dotenv import load_dotenv
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
+from flask import Flask
 
 load_dotenv()
 
@@ -35,13 +38,21 @@ logging.basicConfig(
 )
 log = logging.getLogger("watchdog")
 
-MAX_ARTICLES = int(os.getenv("MAX_ARTICLES_PER_RUN", 270))
+MAX_ARTICLES      = int(os.getenv("MAX_ARTICLES_PER_RUN", 270))
 FETCH_INTERVAL_MIN = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", 120))
 ALERT_INTERVAL_MIN = int(os.getenv("ALERT_INTERVAL_MINUTES", 15))
+PORT               = int(os.getenv("PORT", 8080))
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def health():
+    return "News Watchdog is running.", 200
 
 
 def run_cycle():
-    """Every 2 hours: fetch RSS → triage → mark top 6 as pending. No investigation here."""
+    """Every 2 hours: fetch RSS → triage → mark top articles as pending."""
     log.info("=" * 50)
     log.info("Fetch cycle started")
 
@@ -83,7 +94,7 @@ def investigate_and_alert():
                "category": category, "summary": summary or ""}
     try:
         result = investigate_article(article)
-        verdict = result["verdict"]
+        verdict    = result["verdict"]
         confidence = result["confidence"]
         rep_summary = result["summary"]
 
@@ -91,12 +102,9 @@ def investigate_and_alert():
         log.info(f"[Alert]  → {verdict} ({confidence}%)")
 
         send_alert(
-            title=title,
-            source=source,
-            verdict=verdict,
-            confidence=confidence,
-            summary=rep_summary,
-            url=url,
+            title=title, source=source,
+            verdict=verdict, confidence=confidence,
+            summary=rep_summary, url=url,
         )
         mark_alerted(url)
 
@@ -107,14 +115,18 @@ def investigate_and_alert():
 def main():
     init_db()
     log.info(f"News Watchdog started.")
-    log.info(f"Fetch cycle: every {FETCH_INTERVAL_MIN} min | Alert cycle: every {ALERT_INTERVAL_MIN} min")
+    log.info(f"Fetch: every {FETCH_INTERVAL_MIN} min | Alert: every {ALERT_INTERVAL_MIN} min")
 
-    run_cycle()
-
-    scheduler = BlockingScheduler()
-    scheduler.add_job(run_cycle,           "interval", minutes=FETCH_INTERVAL_MIN)
+    # Run first fetch immediately in background
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(run_cycle,             "interval", minutes=FETCH_INTERVAL_MIN)
     scheduler.add_job(investigate_and_alert, "interval", minutes=ALERT_INTERVAL_MIN)
     scheduler.start()
+
+    run_cycle()  # immediate first run
+
+    # Flask keeps the process alive and satisfies Render's health check
+    app.run(host="0.0.0.0", port=PORT)
 
 
 if __name__ == "__main__":

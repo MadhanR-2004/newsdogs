@@ -8,3 +8,4 @@ python-telegram-bot==22.7
 python-dotenv==1.2.2
 requests==2.34.2
 pysqlite3-binary==0.5.4.post2
+flask
