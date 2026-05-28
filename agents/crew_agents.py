@@ -1,12 +1,14 @@
 # agents/crew_agents.py
-from crewai import Agent
+from crewai import Agent, LLM
 from crewai_tools import SerperDevTool
 from dotenv import load_dotenv
 
 load_dotenv()
 
-LLM = "groq/llama-3.3-70b-versatile"
-search_tool = SerperDevTool()
+# cache=False prevents LiteLLM from injecting cache_breakpoint headers,
+# which Groq rejects with a BadRequestError.
+LLM = LLM(model="groq/llama-3.3-70b-versatile", cache=False)
+search_tool = SerperDevTool(n_results=3)
 
 # Agents are created once at import time and reused across all pipeline calls.
 _agents = None
