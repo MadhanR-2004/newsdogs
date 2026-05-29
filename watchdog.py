@@ -7,11 +7,11 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 import os
 import logging
 
-# Must be set before crewai/litellm are imported
+# Must be set before crewai / litellm are imported
 os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
 os.environ["OTEL_SDK_DISABLED"] = "true"
+# Stop LiteLLM injecting cache_control breakpoints that Groq rejects (400).
 os.environ["LITELLM_DISABLE_PROMPT_CACHING"] = "true"
-os.environ["GROQ_DISABLE_CACHING"] = "true"
 
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -22,14 +22,11 @@ load_dotenv()
 from db.store import (
     init_db, save_article, save_verdict,
     mark_alerted, mark_triaged, get_next_triaged,
-    clear_old_articles,
+    get_untriaged_articles, clear_old_articles,
 )
 from tools.rss_fetcher import fetch_articles
 from tools.telegram_alert import send_alert
 from agents.crew_runner import run_triage, investigate_article
-import litellm
-litellm.disable_cache = True
-os.environ["GROQ_DISABLE_CACHING"] = "true"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +36,7 @@ logging.basicConfig(
 log = logging.getLogger("watchdog")
 
 MAX_ARTICLES      = int(os.getenv("MAX_ARTICLES_PER_RUN", 270))
+TRIAGE_POOL_LIMIT = int(os.getenv("TRIAGE_POOL_LIMIT", 150))
 FETCH_INTERVAL_MIN = int(os.getenv("SCHEDULE_INTERVAL_MINUTES", 120))
 ALERT_INTERVAL_MIN = int(os.getenv("ALERT_INTERVAL_MINUTES", 15))
 PORT               = int(os.getenv("PORT", 8080))
@@ -63,15 +61,18 @@ def run_cycle():
     articles = fetch_articles(max_total=MAX_ARTICLES)
     log.info(f"Fetched {len(articles)} new articles across all feeds")
 
-    if not articles:
-        log.info("Nothing new — feeds haven't updated yet.")
-        return
-
     for a in articles:
         save_article(a["url"], a["title"], a["source"], a.get("category", ""))
 
-    log.info("Running triage (1 pick per category)...")
-    flagged = run_triage(articles)
+    # Triage over the whole un-picked pool (new + leftovers from earlier cycles),
+    # not just this fetch — so an older, more important article still gets a chance.
+    pool = get_untriaged_articles(limit=TRIAGE_POOL_LIMIT)
+    if not pool:
+        log.info("No untriaged articles to triage — nothing to do.")
+        return
+
+    log.info(f"Running triage (1 pick per category) over {len(pool)} untriaged articles...")
+    flagged = run_triage(pool)
     log.info(f"Triage selected {len(flagged)} articles ({', '.join(a['category'] for a in flagged)})")
 
     for a in flagged:
@@ -110,6 +111,9 @@ def investigate_and_alert():
 
     except Exception as e:
         log.error(f"[Alert] Investigation failed: {e}")
+        # Mark it done (verdict no longer NULL) so the FIFO queue advances instead
+        # of re-picking this same article every cycle and blocking everything behind it.
+        save_verdict(url, "ERROR", 0, f"Investigation failed: {e}")
 
 
 def main():

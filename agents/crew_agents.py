@@ -1,13 +1,22 @@
 # agents/crew_agents.py
+import os
+
+# Must be set BEFORE crewai/litellm are imported. This stops LiteLLM from
+# injecting Anthropic-style cache_control breakpoints into the prompt, which
+# Groq rejects with a 400 BadRequestError. (setdefault so watchdog.py / .env win.)
+os.environ.setdefault("LITELLM_DISABLE_PROMPT_CACHING", "true")
+
 from crewai import Agent, LLM
 from crewai_tools import SerperDevTool
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# cache=False prevents LiteLLM from injecting cache_breakpoint headers,
-# which Groq rejects with a BadRequestError.
-LLM = LLM(model="groq/llama-3.3-70b-versatile", cache=False)
+# Do NOT pass cache=False here: crewai forwards it to litellm.completion(), which
+# expects `cache` to be a dict and crashes with
+#   AttributeError: 'bool' object has no attribute 'get'
+# Prompt caching is disabled via LITELLM_DISABLE_PROMPT_CACHING above instead.
+llm = LLM(model="groq/llama-3.3-70b-versatile")
 search_tool = SerperDevTool(n_results=3)
 
 # Agents are created once at import time and reused across all pipeline calls.
@@ -30,7 +39,7 @@ def make_agents():
             "You have a sharp nose for clickbait, propaganda, and misinformation. "
             "You read headlines and quickly identify which ones deserve deeper scrutiny."
         ),
-        llm=LLM,
+        llm=llm,
         tools=[],
         verbose=True,
         allow_delegation=False,
@@ -44,7 +53,7 @@ def make_agents():
             "You search for credible sources, official statements, data, and expert opinions "
             "that support the claim. You only cite real, verifiable sources."
         ),
-        llm=LLM,
+        llm=llm,
         tools=[search_tool],
         verbose=True,
         allow_delegation=False,
@@ -58,7 +67,7 @@ def make_agents():
             "with evidence. You look for official rebuttals, contradicting data, source credibility "
             "issues, and prior misinformation patterns from the same outlet."
         ),
-        llm=LLM,
+        llm=llm,
         tools=[search_tool],
         verbose=True,
         allow_delegation=False,
@@ -75,7 +84,7 @@ def make_agents():
             "You only rule based on the quality and quantity of verified evidence presented to you. "
             "You always output your verdict in a strict format."
         ),
-        llm=LLM,
+        llm=llm,
         tools=[],
         verbose=True,
         allow_delegation=False,
@@ -88,7 +97,7 @@ def make_agents():
             "You are a science communicator who explains complex findings in plain language. "
             "You write for a general audience and always end with the verdict clearly stated."
         ),
-        llm=LLM,
+        llm=llm,
         tools=[],
         verbose=True,
         allow_delegation=False,

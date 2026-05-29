@@ -5,7 +5,9 @@ import time
 from crewai import Task, Crew, Process
 from agents.crew_agents import make_agents
 
-triage_top = int(os.getenv("TRIAGE_PICK_TOP", 5))
+# Throttle LLM calls to stay under Groq's requests-per-minute limit. CrewAI's
+# RPMController paces every agent/tool call in the crew to this ceiling.
+MAX_RPM = int(os.getenv("GROQ_MAX_RPM", 25))
 
 
 def run_triage(articles: list[dict]) -> list[dict]:
@@ -35,24 +37,46 @@ def run_triage(articles: list[dict]) -> list[dict]:
 
     task = Task(
         description=(
-            f"Below are news headlines grouped by category:\n"
+            "You are triaging news headlines to decide which ONE per category most "
+            "deserves a fact-check.\n\n"
             f"{headlines_text}\n\n"
-            f"For EACH of the {num_cats} categories, pick the ONE headline that is most "
-            "suspicious, misleading, or worth fact-checking. "
-            "Respond with ONLY a comma-separated list of article numbers — exactly one per category "
-            "(e.g. 3,12,19,24,31,45)."
+            "A headline scores HIGH if it makes a strong, checkable factual claim that could "
+            "be false, exaggerated, or sensational — surprising statistics, dramatic "
+            "disasters/records, political or financial claims, health/science 'study finds' "
+            "claims, or anything that reads like clickbait or propaganda.\n"
+            "It scores LOW if it is opinion, a recap/preview, routine coverage, or trivial "
+            "entertainment/product news with nothing concrete to verify.\n\n"
+            "Do NOT default to the first headline in a list — judge each one on its content. "
+            "The numbers are not sequential within a category; use the number shown.\n\n"
+            f"For EACH of the {num_cats} categories, write one short line: the number you pick "
+            "and a few words on why. Then on the FINAL line output exactly:\n"
+            "ANSWER: <comma-separated article numbers, one per category>"
         ),
-        expected_output=f"Comma-separated list of {num_cats} article numbers, one per category.",
+        expected_output=(
+            "One short reasoning line per category, then a final line "
+            "'ANSWER: n1, n2, ...' listing one article number per category."
+        ),
         agent=triage,
     )
 
-    crew = Crew(agents=[triage], tasks=[task], process=Process.sequential, verbose=False)
+    crew = Crew(agents=[triage], tasks=[task], process=Process.sequential,
+                verbose=False, max_rpm=MAX_RPM)
     result = crew.kickoff()
     output = str(result).strip()
 
-    # Parse LLM picks
+    # The agent reasons first, then emits a final "ANSWER: ..." line. Parse ONLY
+    # that line so the numbers it mentions while reasoning don't pollute the picks.
+    m = re.search(r"ANSWER:\s*(.+)", output, re.IGNORECASE | re.DOTALL)
+    if m:
+        answer_text = m.group(1)
+    else:
+        # Fallback: the last line that contains any digit.
+        answer_text = next(
+            (ln for ln in reversed(output.splitlines()) if re.search(r"\d", ln)), output
+        )
+
     picked_indices = []
-    for token in re.findall(r"\d+", output):
+    for token in re.findall(r"\d+", answer_text):
         idx = int(token) - 1
         if 0 <= idx < len(articles):
             picked_indices.append(idx)
@@ -137,6 +161,7 @@ def _run_pipeline(article: dict) -> dict:
         tasks=[t_believe, t_skeptic, t_judge, t_report],
         process=Process.sequential,
         verbose=True,
+        max_rpm=MAX_RPM,
     )
 
     result = crew.kickoff()

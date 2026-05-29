@@ -2,6 +2,8 @@ services:
   - type: web
     name: news-watchdog
     runtime: python
+    plan: free
+    healthCheckPath: /
     buildCommand: pip install -r requirements.txt
     startCommand: python watchdog.py
     envVars:
@@ -19,10 +21,18 @@ services:
         value: "15"
       - key: MAX_ARTICLES_PER_RUN
         value: "270"
-      - key: TRIAGE_PICK_TOP
-        value: "6"
-      - key: CONFIDENCE_ALERT_THRESHOLD
-        value: "40"
+      - key: TRIAGE_POOL_LIMIT
+        value: "150"
+      - key: MAX_PER_FEED
+        value: "5"
+      - key: FEED_FETCH_TIMEOUT
+        value: "10"
+      - key: FEED_FETCH_WORKERS
+        value: "12"
+      - key: GROQ_MAX_RPM
+        value: "25"
+      - key: LITELLM_DISABLE_PROMPT_CACHING
+        value: "true"
       - key: CREWAI_TELEMETRY_OPT_OUT
         value: "true"
       - key: OTEL_SDK_DISABLED

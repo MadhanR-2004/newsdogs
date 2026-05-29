@@ -42,6 +42,17 @@ def already_checked(url: str) -> bool:
     return found
 
 
+def get_known_urls() -> set[str]:
+    """All URLs already in the DB, fetched in ONE query for cheap in-memory dedup
+    (instead of one SELECT per candidate article)."""
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("SELECT url FROM articles")
+    urls = {row[0] for row in cur.fetchall()}
+    con.close()
+    return urls
+
+
 def save_article(url: str, title: str, source: str, category: str = ""):
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
@@ -55,6 +66,28 @@ def save_article(url: str, title: str, source: str, category: str = ""):
         pass
     finally:
         con.close()
+
+
+def get_untriaged_articles(limit: int = 150) -> list[dict]:
+    """All articles not yet picked by triage (triaged = 0), newest first, capped at
+    `limit`. This is the triage candidate pool: freshly fetched articles PLUS
+    leftovers from earlier cycles that weren't picked, so they get another chance."""
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute(
+        """SELECT url, title, source, category, summary
+           FROM articles
+           WHERE triaged = 0
+           ORDER BY fetched_at DESC
+           LIMIT ?""",
+        (limit,),
+    )
+    rows = cur.fetchall()
+    con.close()
+    return [
+        {"url": u, "title": t, "source": s, "category": c, "summary": sm or ""}
+        for (u, t, s, c, sm) in rows
+    ]
 
 
 def mark_triaged(url: str):
@@ -101,10 +134,17 @@ def mark_alerted(url: str):
 
 
 def clear_old_articles(hours: int = 24):
+    """Purge articles older than `hours`, but KEEP any that were triaged and are
+    still awaiting investigation (verdict IS NULL) so queued picks never expire
+    before they're fact-checked."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute("DELETE FROM articles WHERE fetched_at < ?", (cutoff,))
+    cur.execute(
+        "DELETE FROM articles "
+        "WHERE fetched_at < ? AND NOT (triaged = 1 AND verdict IS NULL)",
+        (cutoff,),
+    )
     deleted = cur.rowcount
     con.commit()
     con.close()
