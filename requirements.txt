@@ -1,7 +1,8 @@
 crewai==1.14.5
 crewai-tools==1.14.5
 langchain-groq==1.1.2
-litellm==1.83.14
+litellm==1.86.2
+openai==2.38.0
 feedparser==6.0.12
 apscheduler==3.11.2
 python-telegram-bot==22.7
