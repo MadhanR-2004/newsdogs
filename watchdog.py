@@ -6,6 +6,7 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 import os
 import logging
+from datetime import datetime
 
 # Must be set before crewai / litellm are imported
 os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
@@ -121,15 +122,18 @@ def main():
     log.info(f"News Watchdog started.")
     log.info(f"Fetch: every {FETCH_INTERVAL_MIN} min | Alert: every {ALERT_INTERVAL_MIN} min")
 
-    # Run first fetch immediately in background
     scheduler = BackgroundScheduler()
-    scheduler.add_job(run_cycle,             "interval", minutes=FETCH_INTERVAL_MIN)
+    # First fetch runs almost immediately, but IN THE BACKGROUND (next_run_time=now)
+    # so a slow or failing first cycle never blocks the port from binding. Render
+    # kills a web service that doesn't open its port quickly, and APScheduler logs
+    # a job exception instead of crashing the process — so a bad cycle can't take
+    # the whole service (and its health check) down.
+    scheduler.add_job(run_cycle, "interval", minutes=FETCH_INTERVAL_MIN,
+                      next_run_time=datetime.now())
     scheduler.add_job(investigate_and_alert, "interval", minutes=ALERT_INTERVAL_MIN)
     scheduler.start()
 
-    run_cycle()  # immediate first run
-
-    # Flask keeps the process alive and satisfies Render's health check
+    # Flask binds the port immediately and keeps the process alive for Render.
     app.run(host="0.0.0.0", port=PORT)
 
 

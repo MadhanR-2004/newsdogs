@@ -10,6 +10,23 @@ from crewai import Agent, LLM
 from crewai_tools import SerperDevTool
 from dotenv import load_dotenv
 
+# crewai 1.14.5 tags the system/user prompt with a `cache_breakpoint` flag for
+# prompt caching, but its Groq (litellm) path never strips that flag — so Groq
+# rejects the request: "property 'cache_breakpoint' is unsupported". Groq has no
+# prompt-caching API, so the marker is pure liability. Replace crewai's
+# mark_cache_breakpoint with a strip-only no-op. The executors import this function
+# at call time (inside the method), so patching the module attribute takes effect.
+# NOTE: this is the real fix for the Groq 400 — it must live in our code so it
+# ships to Render; editing the installed crewai file would not survive a fresh deploy.
+import crewai.llms.cache as _crew_cache
+
+
+def _strip_cache_breakpoint(message: dict) -> dict:
+    return {k: v for k, v in message.items() if k != _crew_cache.CACHE_BREAKPOINT_KEY}
+
+
+_crew_cache.mark_cache_breakpoint = _strip_cache_breakpoint
+
 load_dotenv()
 
 # Do NOT pass cache=False here: crewai forwards it to litellm.completion(), which
