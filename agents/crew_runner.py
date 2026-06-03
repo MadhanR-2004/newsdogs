@@ -4,6 +4,7 @@ import re
 import time
 from crewai import Task, Crew, Process
 from agents.crew_agents import make_agents
+from tools.web_search import web_search
 
 # Throttle LLM calls to stay under Groq's requests-per-minute limit. CrewAI's
 # RPMController paces every agent/tool call in the crew to this ceiling.
@@ -115,10 +116,24 @@ def _run_pipeline(article: dict) -> dict:
 
     claim = f"'{article['title']}' (Source: {article['source']})\n\nContext: {article['summary']}"
 
+    # Fetch web evidence ourselves and inject it (agents have no tools — see
+    # crew_agents.py). Degrades gracefully to a no-sources note if Serper is down.
+    results = web_search(article["title"], n=4)
+    if results:
+        evidence = (
+            "\n\nWeb search results — use these as your primary evidence and cite the URLs:\n"
+            f"{results}"
+        )
+    else:
+        evidence = (
+            "\n\n(No web search results available. Reason from the claim itself and the "
+            "source's credibility, and note the lack of corroborating sources.)"
+        )
+
     t_believe = Task(
         description=(
-            f"Research and find the strongest SUPPORTING evidence for this claim:\n{claim}\n\n"
-            "List bullet points with source URLs. Be specific — no vague statements."
+            f"Find the strongest SUPPORTING evidence that this claim is TRUE:\n{claim}{evidence}\n\n"
+            "List bullet points, citing the URLs above where relevant. Be specific — no vague statements."
         ),
         expected_output="Bullet list of supporting evidence with source URLs.",
         agent=believer,
@@ -126,8 +141,8 @@ def _run_pipeline(article: dict) -> dict:
 
     t_skeptic = Task(
         description=(
-            f"Research and find the strongest COUNTER evidence against this claim:\n{claim}\n\n"
-            "List bullet points with source URLs. Be specific — no vague statements."
+            f"Find the strongest COUNTER evidence that this claim is FALSE or misleading:\n{claim}{evidence}\n\n"
+            "List bullet points, citing the URLs above where relevant. Be specific — no vague statements."
         ),
         expected_output="Bullet list of counter-evidence with source URLs.",
         agent=skeptic,

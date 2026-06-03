@@ -7,7 +7,6 @@ import os
 os.environ.setdefault("LITELLM_DISABLE_PROMPT_CACHING", "true")
 
 from crewai import Agent, LLM
-from crewai_tools import SerperDevTool
 from dotenv import load_dotenv
 
 # crewai 1.14.5 tags the system/user prompt with a `cache_breakpoint` flag for
@@ -33,8 +32,23 @@ load_dotenv()
 # expects `cache` to be a dict and crashes with
 #   AttributeError: 'bool' object has no attribute 'get'
 # Prompt caching is disabled via LITELLM_DISABLE_PROMPT_CACHING above instead.
-llm = LLM(model="groq/llama-3.3-70b-versatile")
-search_tool = SerperDevTool(n_results=3)
+
+# Two models to live within Groq's free tier (70B: 100k tokens/day, 12k/min).
+#  - BIG  (llama-3.3-70b): the reasoning agents — believer, skeptic, judge.
+#  - SMALL (llama-3.1-8b-instant): triage + reporter. The 8B has a much larger
+#    free daily token budget, so offloading these keeps the scarce 70B budget for
+#    the actual fact-checking.
+# max_tokens caps OUTPUT per call so a rambling answer can't blow the budget.
+BIG_MODEL   = os.getenv("GROQ_MODEL", "groq/llama-3.3-70b-versatile")
+SMALL_MODEL = os.getenv("GROQ_SMALL_MODEL", "groq/llama-3.1-8b-instant")
+MAX_TOKENS  = int(os.getenv("LLM_MAX_TOKENS", 600))
+
+llm       = LLM(model=BIG_MODEL,   max_tokens=MAX_TOKENS)   # believer, skeptic, judge
+llm_small = LLM(model=SMALL_MODEL, max_tokens=MAX_TOKENS)   # triage, reporter
+
+# No agent tools: Groq's llama-3.3 tool-calling is unreliable (it emits malformed
+# function calls → 'tool_use_failed'). Web evidence is fetched in crew_runner via
+# tools/web_search.py and injected into the believer/skeptic prompts instead.
 
 # Agents are created once at import time and reused across all pipeline calls.
 _agents = None
@@ -56,7 +70,7 @@ def make_agents():
             "You have a sharp nose for clickbait, propaganda, and misinformation. "
             "You read headlines and quickly identify which ones deserve deeper scrutiny."
         ),
-        llm=llm,
+        llm=llm_small,
         tools=[],
         verbose=True,
         allow_delegation=False,
@@ -71,7 +85,7 @@ def make_agents():
             "that support the claim. You only cite real, verifiable sources."
         ),
         llm=llm,
-        tools=[search_tool],
+        tools=[],
         verbose=True,
         allow_delegation=False,
     )
@@ -85,7 +99,7 @@ def make_agents():
             "issues, and prior misinformation patterns from the same outlet."
         ),
         llm=llm,
-        tools=[search_tool],
+        tools=[],
         verbose=True,
         allow_delegation=False,
     )
@@ -114,7 +128,7 @@ def make_agents():
             "You are a science communicator who explains complex findings in plain language. "
             "You write for a general audience and always end with the verdict clearly stated."
         ),
-        llm=llm,
+        llm=llm_small,
         tools=[],
         verbose=True,
         allow_delegation=False,

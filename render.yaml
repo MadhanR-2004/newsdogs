@@ -15,20 +15,28 @@ services:
         sync: false
       - key: SERPER_API_KEY
         sync: false
+      # --- Scheduling tuned to stay under Groq free tier (70B: 100k tokens/day) ---
       - key: SCHEDULE_INTERVAL_MINUTES
-        value: "120"
+        value: "180"          # fetch + triage 8x/day (triage runs on the 8B model)
       - key: ALERT_INTERVAL_MINUTES
-        value: "15"
+        value: "90"           # ~16 investigations/day on the 70B (believer+skeptic+judge)
       - key: MAX_ARTICLES_PER_RUN
         value: "270"
       - key: TRIAGE_POOL_LIMIT
-        value: "150"
+        value: "40"           # smaller triage prompt
       - key: MAX_PER_FEED
         value: "5"
       - key: FEED_FETCH_TIMEOUT
         value: "10"
       - key: FEED_FETCH_WORKERS
         value: "12"
+      # --- Groq models & limits ---
+      - key: GROQ_MODEL
+        value: "groq/llama-3.3-70b-versatile"
+      - key: GROQ_SMALL_MODEL
+        value: "groq/llama-3.1-8b-instant"
+      - key: LLM_MAX_TOKENS
+        value: "600"
       - key: GROQ_MAX_RPM
         value: "25"
       - key: LITELLM_DISABLE_PROMPT_CACHING
